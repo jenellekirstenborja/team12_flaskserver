@@ -1,0 +1,102 @@
+import serial
+import requests
+import time
+import threading
+import csv
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+
+# Sensor names for the legend
+sensor_names = ['R_Quads', 'R_Hams', 'R_Glutes', 'L_Quads', 'L_Hams', 'L_Glutes']
+sensor_count = len(sensor_names)  # Determine the number of sensors from the names list
+
+# Save data to CSV file
+# Modify this function to split the original_data and save each value in its own column
+def save_data_to_csv(original_data):
+    data_list = original_data.split('/')  # Split the data string into a list
+    with open('testing10.csv', mode='a', newline='') as file:
+        writer = csv.writer(file)
+        # Write the current timestamp followed by each sensor's value in its own column
+        writer.writerow([time.strftime("%Y-%m-%d %H:%M:%S")] + data_list)
+
+# Send data to Flask server
+def send_data(original_data):
+    payload = {'sensor_values': original_data}
+    try:
+        response = requests.post(flask_server_url, json=payload)
+        print(f"Sent to Flask server, response: {response.text}")
+    except requests.exceptions.RequestException as e:
+        print(f"Error sending to Flask server: {e}")
+
+# Plotting setup
+fig, ax = plt.subplots()
+lines = []
+for i in range(sensor_count):
+    line, = ax.plot([], [], lw=2, label=sensor_names[i])  # Assign label to line
+    lines.append(line)
+ax.legend(loc='upper left')  # Place the legend in the upper left corner
+
+
+# Update plot
+def update(frame):
+    global xdata
+    if ser.inWaiting():
+        line = ser.readline().decode().strip()
+        if line:
+            print(line)
+            data_strings = line.split('/')
+            data = [float(val) for val in data_strings if val]  # Convert each to float
+
+            # Save the original data to CSV
+            save_data_to_csv(line)
+
+            # Send the original data to Flask server in a separate thread
+            threading.Thread(target=send_data, args=(line,)).start()
+
+            # Update plot for each sensor
+            for i, value in enumerate(data):
+                lines[i].set_xdata(list(lines[i].get_xdata()) + [frame])
+                lines[i].set_ydata(list(lines[i].get_ydata()) + [value])
+
+                # Keep only the last 50 points for a scrolling effect
+                if len(lines[i].get_xdata()) > 50:
+                    lines[i].set_xdata(lines[i].get_xdata()[-50:])
+                    lines[i].set_ydata(lines[i].get_ydata()[-50:])
+
+            # Adjust the x-axis limits to the latest data point for a scrolling effect
+            ax.set_xlim(max(0, frame - 50), frame + 1)
+
+            ax.relim()  # Recompute the ax.dataLim
+            ax.autoscale_view()  # Autoscale
+            ax.legend(loc='upper left')  # Update the legend with each new frame
+
+    return lines
+
+
+# Initialize plot
+def init():
+    ax.set_ylim(-10, 130)  # Adjust based on the range of your sensor data
+    ax.set_title('Cyklofit Real-time Sensor Data')
+    ax.set_xlabel('Time')  # Set the x-axis label
+    ax.set_ylabel('Amplitude')  # Set the y-axis label
+    return lines
+
+
+sensor_count = len(sensor_names)  # Determine the number of sensors from the names list
+arduino_port = "COM5"  # Adjust as per your system
+baud = 9600
+flask_server_url = 'https://cyklofit-production.up.railway.app/receive-data'
+
+ser = serial.Serial(arduino_port, baud, timeout=0.1)
+time.sleep(0.1)
+print("Connected to Arduino port:" + arduino_port)
+
+# Initialize the CSV file with headers
+with open('testing10.csv', mode='w', newline='') as file:
+    writer = csv.writer(file)
+    writer.writerow(["Timestamp"] + sensor_names)
+
+ani = FuncAnimation(fig, update, init_func=init, frames=range(1, 1000), blit=False, interval=100)
+plt.show()
+
+ser.close()
